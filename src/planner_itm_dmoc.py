@@ -2,6 +2,7 @@ from casadi import MX, DM, SX, vertcat, horzcat, veccat, norm_2, dot, mtimes, nl
 import casadi as ca
 import numpy as np
 import inspect
+from copy import deepcopy
 
 
 class Planner:
@@ -29,12 +30,16 @@ class Planner:
             self.q_init = DM([1, 0, 0, 0]).T
 
         # Dynamics
-        dynamics = quad.dynamics()
-        self.fdyn = Integrator(dynamics)
+        self.quad.get_Lagrangian_casadi()
+        # dynamics = quad.dynamics()
+        # self.fdyn = Integrator(dynamics)
 
         # Sizes
-        self.NX = dynamics.size1_in(0)
-        self.NU = dynamics.size1_in(1)
+        # self.NX = dynamics.size1_in(0)
+        # self.NU = dynamics.size1_in(1)
+        self.NX = 6
+        # self.n_dmoc_states = int(self.quad.n_states / 2)
+        self.NU = self.quad.n_controls
         self.NW = self.wp.shape[1]
 
         dist = [np.linalg.norm(self.wp[:, 0] - self.p_init)]
@@ -123,7 +128,7 @@ class Planner:
         i_wp = 0
         # linearly interpolate max thrust and max omegas
         u0 = np.tile(np.array([self.quad.T_max] * 4),
-                     self.N).reshape(-1, self.N)
+                     self.N + 1).reshape(-1, self.N)
         mu0 = []
         tau0 = np.tile(np.array([0.0] * self.NW), self.N)
         lambda0 = [1.0] * self.NW
@@ -137,13 +142,9 @@ class Planner:
             vel_guess[2], q_init[0], q_init[1], q_init[2], q_init[3], 0, 0, 0
         ]
 
-        print(x0)
-        print(len(x0))
         if self.track.init_vel is not None:
-            print(self.track.init_vel)
             for i in range(3, 6):
                 x0[i] = self.track.init_vel[i - 3]
-        print(len(x0))
         pos_guess = p_init
         for i in range(self.N):
             # if i >= (1 + i_wp) * self.NPW:
@@ -178,12 +179,6 @@ class Planner:
                                          self.quad.rampup_dist,
                                          self.quad.T_max, i * self.dpn),
                         self.quad.T_max), self.quad.T_ramp_start)
-                omega_max_xy = max(
-                    min(
-                        self.interpolate(0, self.quad.omega_ramp_start,
-                                         self.quad.rampup_dist,
-                                         self.quad.omega_max_xy, i * self.dpn),
-                        self.quad.omega_max_xy), self.quad.omega_ramp_start)
                 u0[:, i] = np.array([T_max] * 4)
 
             if ((i_wp == 0) and (i + 1 >= self.i_switch[0])
@@ -214,18 +209,39 @@ class Planner:
         ])
 
     def setup(self):
-        x = []
-
-        g = []
-
         # Total time variable
         t = SX.sym('t', 1)
-        u = SX.sym('u', self.NU, self.N)
+        u = SX.sym('u', self.NU, self.N + 1)
         x = SX.sym('x', self.NX, self.N + 1)
         mu = SX.sym('mu', self.NW, self.N)
         lamg = SX.sym('lamg', self.NW, self.N + 1)
         tau = SX.sym('tau', self.NW, self.N)
         J = t
+        self.dt = t / self.N
+
+        # DMOC setup
+        # discrete lagrange equations
+        q_nm1 = SX.sym('qnm1', self.NX)
+        q_n = SX.sym('qn', self.NX)
+        q_np1 = SX.sym('qnp1', self.NX)
+        D2L_d = ca.gradient(
+            self.discrete_lagrange(self.dt, q_nm1, q_n, self.quad.fct_L), q_n)
+        D1L_d = ca.gradient(
+            self.discrete_lagrange(self.dt, q_n, q_np1, self.quad.fct_L), q_n)
+        d_EulerLagrange = ca.Function('dEL', [q_nm1, q_n, q_np1],
+                                      [D2L_d + D1L_d])
+        q_b = SX.sym('q_b', self.n_dmoc_states)
+        q_b_dot = SX.sym('q_b_dot', self.n_dmoc_states)
+        D2L = self.quad.fct_L_ddstates(q_b, q_b_dot)
+        d_EulerLagrange_init = ca.Function('dEl_init',
+                                           [q_b, q_b_dot, q_n, q_np1],
+                                           [D2L + D1L_d])
+        d_EulerLagrange_end = ca.Function('dEl_end',
+                                          [q_b, q_b_dot, q_nm1, q_n],
+                                          [-D2L + D2L_d])
+
+        x = []
+        g = []
 
         if self.track.init_pos is not None:
             # if self.track.init_pos is not None and not self.track.ring:
@@ -241,7 +257,8 @@ class Planner:
             for i in range(4):
                 g.append(x[6 + i, 0] - self.track.init_att[i])
         else:
-            g.append(1.0 - dot(x[6:10, 0], x[6:10, 0]))
+            for i in range(3):
+                g.append(x[3 + i, 0])
         if self.track.init_omega is not None:
             print('Using start bodyrate constraint')
             for i in range(3):
@@ -384,3 +401,70 @@ class Planner:
             return 0
 
         return y1 + (y2 - y1) / (x2 - x1) * (x - x1)
+
+    @staticmethod
+    def discrete_lagrange(dt, q_n, q_np1, fct_L, num_state=6):
+        """
+        second-order accurate diescrete Lagrangian
+        Args:
+            dt: diescrete time step
+            q_n: state at n step
+            q_np1: state at n+1 step
+            fct_L: lagrange function
+        Returns:
+            symbolic
+        """
+        q = (q_n + q_np1) / 2.
+        # average of euler angles in Rad, [x, y, z, r, p, y]
+        for i in range(3, num_state):
+            s_ = ca.sin(q_n[i]) + ca.sin(q_np1[i])
+            c_ = ca.cos(q_n[i]) + ca.cos(q_np1[i])
+            q[i] = ca.atan2(s_, c_)
+
+        q_dot = (q_np1 - q_n) / dt
+        for i in range(3, num_state):
+            diff_ = q_np1[i] - q_n[i]
+            q_dot[i] = ca.atan2(ca.sin(diff_), ca.cos(diff_)) / dt
+        L_d = dt * fct_L(q, q_dot)
+        return L_d
+
+    @staticmethod
+    def average_velocity(state_1, state_2, dt, num_state=6):
+        # velocity (q_2 - q_1)/dt
+        assert state_1.shape == (num_state,
+                                 1) and state_2.shape == (num_state,
+                                                          1), state_1.shape
+        d_q = (state_2 - state_1)
+
+        if num_state > 3:
+            q_dot = deepcopy(state_1)
+            for i in range(3):
+                q_dot[i] = d_q[i] / dt
+                q_dot[i + 3] = ca.atan2(ca.sin(d_q[i + 3]), ca.cos(
+                    d_q[i + 3])) / dt
+
+        return q_dot
+
+    @staticmethod
+    def quaternion_to_rpy(quaternion):
+        q0, q1, q2, q3 = quaternion
+        roll_ = np.arctan2(2 * (q0 * q1 + q2 * q3), 1 - 2 * (q1**2 + q2**2))
+        pitch_ = np.arcsin(2 * (q0 * q2 - q3 * q1))
+        yaw_ = np.arctan2(2 * (q0 * q3 + q1 * q2), 1 - 2 * (q2**2 + q3**2))
+        return roll_, pitch_, yaw_
+
+    @staticmethod
+    def rpy_to_quaternion(rpy):
+        roll_, pitch_, yaw_ = rpy
+        cy = np.cos(yaw_ * 0.5)
+        sy = np.sin(yaw_ * 0.5)
+        cp = np.cos(pitch_ * 0.5)
+        sp = np.sin(pitch_ * 0.5)
+        cr = np.cos(roll_ * 0.5)
+        sr = np.sin(roll_ * 0.5)
+
+        w_ = cr * cp * cy + sr * sp * sy
+        x_ = sr * cp * cy - cr * sp * sy
+        y_ = cr * sp * cy + sr * cp * sy
+        z_ = cr * cp * sy - sr * sp * cy
+        return np.array([w_, x_, y_, z_])
