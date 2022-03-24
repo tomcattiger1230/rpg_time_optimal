@@ -1,4 +1,4 @@
-from casadi import MX, DM, vertcat, mtimes, Function, inv, cross, sqrt, norm_2
+from casadi import MX, DM, SX,vertcat, mtimes, Function, inv, cross, sqrt, norm_2
 import yaml
 from quaternion import *
 import casadi as ca
@@ -100,23 +100,23 @@ class Quad:
 
     def get_Lagrangian_casadi(self):
         # set symbolic parameters using casadi
-        x = MX.sym('x')
-        y = MX.sym('y')
-        z = MX.sym('z')
-        phi = MX.sym('phi')
-        theta = MX.sym('theta')
-        psi = MX.sym('psi')
+        x = SX.sym('x')
+        y = SX.sym('y')
+        z = SX.sym('z')
+        phi = SX.sym('phi')
+        theta = SX.sym('theta')
+        psi = SX.sym('psi')
         states_2 = ca.vertcat(x, y, z, phi, theta, psi)
         p = ca.vertcat(x, y, z)
         # angle = ca.vertcat(phi, theta, psi)
 
         # set states_dot
-        d_x = MX.sym('dx')
-        d_y = MX.sym('dy')
-        d_z = MX.sym('dz')
-        d_phi = MX.sym('dphi')
-        d_theta = MX.sym('dtheta')
-        d_psi = MX.sym('dpsi')
+        d_x = SX.sym('dx')
+        d_y = SX.sym('dy')
+        d_z = SX.sym('dz')
+        d_phi = SX.sym('dphi')
+        d_theta = SX.sym('dtheta')
+        d_psi = SX.sym('dpsi')
         d_states = ca.vertcat(d_x, d_y, d_z, d_phi, d_theta, d_psi)
         states = ca.vertcat(states_2, d_states)
         p_dot = ca.vertcat(d_x, d_y, d_z)
@@ -155,10 +155,10 @@ class Quad:
         self.fct_L_ddstates = ca.Function('fct_L_ddstates',
                                           [states_2, d_states], [L_ddstates])
         # all input forces from motors
-        U1 = MX.sym("U1")  # motor 1
-        U2 = MX.sym("U2")  # motor 2
-        U3 = MX.sym("U3")  # motor 3
-        U4 = MX.sym("U4")  # motor 4
+        U1 = SX.sym("U1")  # motor 1
+        U2 = SX.sym("U2")  # motor 2
+        U3 = SX.sym("U3")  # motor 3
+        U4 = SX.sym("U4")  # motor 4
         u = ca.vertcat(U1, U2, U3, U4)
         f_local = U1 + U2 + U3 + U4
         f_xyz = ca.mtimes([eRb, e3, f_local])

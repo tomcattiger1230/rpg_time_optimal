@@ -134,17 +134,14 @@ class Planner:
         lambda0 = [1.0] * self.NW
         p_init = self.p_init.full().flatten().tolist()
         q_init = self.q_init.full().flatten().tolist()
+        rpy_init = self.quaternion_to_rpy(q_init)
         vel_guess = (self.wp[:, 0].full() - self.p_init.full())
         vel_guess = (self.vel_guess * vel_guess /
                      norm_2(vel_guess)).full().flatten().tolist()
         x0 = [
-            p_init[0], p_init[1], p_init[2], vel_guess[0], vel_guess[1],
-            vel_guess[2], q_init[0], q_init[1], q_init[2], q_init[3], 0, 0, 0
+            p_init[0], p_init[1], p_init[2], rpy_init[0], rpy_init[1], rpy_init[2]
         ]
 
-        if self.track.init_vel is not None:
-            for i in range(3, 6):
-                x0[i] = self.track.init_vel[i - 3]
         pos_guess = p_init
         for i in range(self.N):
             # if i >= (1 + i_wp) * self.NPW:
@@ -169,8 +166,7 @@ class Planner:
             # else:
             #   vel_guess = (1 - interp) * 4 * self.vel_guess * direction
             # pos_guess += self.t_guess / self.N * vel_guess
-            x0 = x0 + pos_guess.full().flatten().tolist() + vel_guess.full(
-            ).flatten().tolist() + q_init + [0] * 3
+            x0 = x0 + pos_guess.full().flatten().tolist() + rpy_init.flatten().tolist()
 
             if self.quad.rampup_dist > 0:
                 T_max = max(
@@ -251,123 +247,130 @@ class Planner:
         if self.track.init_vel is not None:
             print('Using start velocity constraint')
             for i in range(3):
-                g.append(x[3 + i, 0] - self.track.init_vel[i])
+                g.append((x[i, 1]-x[i, 0])/self.dt - self.track.init_vel[i])
         if self.track.init_att is not None:
             print('Using start attitude constraint')
-            for i in range(4):
-                g.append(x[6 + i, 0] - self.track.init_att[i])
+            rpy_des_ = self.quaternion_to_rpy(self.track.init_att)
+            rpy_org_ = self.quaternion_to_rpy(x[6:10, 0])
+            for i in range(3):
+                g.append(rpy_des_[i]-rpy_org_[i])
         else:
             for i in range(3):
                 g.append(x[3 + i, 0])
         if self.track.init_omega is not None:
             print('Using start bodyrate constraint')
+            rpy_0_ = self.quaternion_to_rpy(x[6:10, 0])
+            rpy_1_ = self.quaternion_to_rpy(x[6:10, 1])
+            d_q_ = rpy_1_ - rpy_0_
             for i in range(3):
-                g.append(x[10 + i, 0] - self.track.init_omega[i])
+                q_dot_ = ca.atan2(ca.sin(d_q_[i]), ca.cos(
+                    d_q_[i] )) / dt
+                g.append(q_dot_ - self.track.init_omega[i])
         self.init_state_guess()
 
-        # Bound inital progress variable to 1
-        for i in range(self.NW):
-            g.append(lamg[i, 0] - 1)
-            g.append(lamg[i, -1])
+        # # Bound inital progress variable to 1
+        # for i in range(self.NW):
+        #     g.append(lamg[i, 0] - 1)
+        #     g.append(lamg[i, -1])
 
-        # For each node ...
-        for i in range(self.N):
-            # ... add next state
-            Fnext = self.fdyn(x=x[:, i], u=u[:, i], dt=t / self.N)
-            xn = Fnext['xn']
-            for k in range(self.NX):
-                g.append(xn[k] - x[k, i + 1])
+        # # For each node ...
+        # for i in range(self.N):
+        #     # ... add next state
+        #     Fnext = self.fdyn(x=x[:, i], u=u[:, i], dt=t / self.N)
+        #     xn = Fnext['xn']
+        #     for k in range(self.NX):
+        #         g.append(xn[k] - x[k, i + 1])
 
-            for j in range(self.NW):
-                # cc
-                diff = x[0:3, i] - self.wp[:, j]
-                g.append(mu[j, i] * (dot(diff, diff) - tau[j]))
-                # change of mu
-                g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
-        self.equal_constraint_length = len(g)
+        #     for j in range(self.NW):
+        #         # cc
+        #         diff = x[0:3, i] - self.wp[:, j]
+        #         g.append(mu[j, i] * (dot(diff, diff) - tau[j]))
+        #         # change of mu
+        #         g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
+        # self.equal_constraint_length = len(g)
 
-        # Reformat
-        self.x = ca.vcat([
-            t,
-            ca.reshape(u, -1, 1),
-            ca.reshape(x, -1, 1),
-            ca.reshape(lamg, -1, 1),
-            ca.reshape(mu, -1, 1),
-            ca.reshape(tau, -1, 1)
-        ])
+        # # Reformat
+        # self.x = ca.vcat([
+        #     t,
+        #     ca.reshape(u, -1, 1),
+        #     ca.reshape(x, -1, 1),
+        #     ca.reshape(lamg, -1, 1),
+        #     ca.reshape(mu, -1, 1),
+        #     ca.reshape(tau, -1, 1)
+        # ])
 
-        self.g = ca.vertcat(*g)
-        self.J = J
+        # self.g = ca.vertcat(*g)
+        # self.J = J
 
-        # Construct Non-Linear Program
-        self.nlp = {'f': self.J, 'x': self.x, 'g': self.g}
+        # # Construct Non-Linear Program
+        # self.nlp = {'f': self.J, 'x': self.x, 'g': self.g}
 
-        # constraints
-        lbg = []
-        ubg = []
-        # equality constraints
-        for _ in range(self.equal_constraint_length):
-            lbg.append(0.0)
-            ubg.append(0.0)
+        # # constraints
+        # lbg = []
+        # ubg = []
+        # # equality constraints
+        # for _ in range(self.equal_constraint_length):
+        #     lbg.append(0.0)
+        #     ubg.append(0.0)
 
-        lbx = [0.1]
-        ubx = [150]
+        # lbx = [0.1]
+        # ubx = [150]
 
-        # U
-        for i in range(self.N):
-            T_max = self.quad.T_max
-            if self.quad.rampup_dist > 0:
-                T_max = max(
-                    min(
-                        self.interpolate(0, self.quad.T_ramp_start,
-                                         self.quad.rampup_dist,
-                                         self.quad.T_max, i * self.dpn),
-                        self.quad.T_max), self.quad.T_ramp_start)
-            lbx += [self.quad.T_min] * self.NU
-            ubx += [T_max] * self.NU
+        # # U
+        # for i in range(self.N):
+        #     T_max = self.quad.T_max
+        #     if self.quad.rampup_dist > 0:
+        #         T_max = max(
+        #             min(
+        #                 self.interpolate(0, self.quad.T_ramp_start,
+        #                                  self.quad.rampup_dist,
+        #                                  self.quad.T_max, i * self.dpn),
+        #                 self.quad.T_max), self.quad.T_ramp_start)
+        #     lbx += [self.quad.T_min] * self.NU
+        #     ubx += [T_max] * self.NU
 
-        # X
-        for i in range(self.N + 1):
-            omega_max_xy = self.quad.omega_max_xy
-            if self.quad.rampup_dist > 0:
-                omega_max_xy = max(
-                    min(
-                        self.interpolate(0, self.quad.omega_ramp_start,
-                                         self.quad.rampup_dist,
-                                         self.quad.omega_max_xy, i * self.dpn),
-                        self.quad.omega_max_xy), self.quad.omega_ramp_start)
+        # # X
+        # for i in range(self.N + 1):
+        #     omega_max_xy = self.quad.omega_max_xy
+        #     if self.quad.rampup_dist > 0:
+        #         omega_max_xy = max(
+        #             min(
+        #                 self.interpolate(0, self.quad.omega_ramp_start,
+        #                                  self.quad.rampup_dist,
+        #                                  self.quad.omega_max_xy, i * self.dpn),
+        #                 self.quad.omega_max_xy), self.quad.omega_ramp_start)
 
-            lbx = lbx + [
-                -np.inf, -np.inf, 0.5, -np.inf, -np.inf, -np.inf, -np.inf,
-                -np.inf, -np.inf, -np.inf, -omega_max_xy, -omega_max_xy,
-                -self.quad.omega_max_z
-            ]
-            ubx = ubx + [
-                np.inf, np.inf, 100.0, np.inf, np.inf, np.inf, np.inf, np.inf,
-                np.inf, np.inf, omega_max_xy, omega_max_xy,
-                self.quad.omega_max_z
-            ]
+        #     lbx = lbx + [
+        #         -np.inf, -np.inf, 0.5, -np.inf, -np.inf, -np.inf, -np.inf,
+        #         -np.inf, -np.inf, -np.inf, -omega_max_xy, -omega_max_xy,
+        #         -self.quad.omega_max_z
+        #     ]
+        #     ubx = ubx + [
+        #         np.inf, np.inf, 100.0, np.inf, np.inf, np.inf, np.inf, np.inf,
+        #         np.inf, np.inf, omega_max_xy, omega_max_xy,
+        #         self.quad.omega_max_z
+        #     ]
 
-        # lambda
-        for _ in range(self.N + 1):
-            for _ in range(self.NW):
-                lbx.append(0)
-                ubx.append(1)
-        # mu
-        for _ in range(self.N):
-            for _ in range(self.NW):
-                lbx.append(0)
-                ubx.append(1)
-        # tau
-        for _ in range(self.N):
-            for _ in range(self.NW):
-                lbx.append(0)
-                ubx.append(self.tol**2)
+        # # lambda
+        # for _ in range(self.N + 1):
+        #     for _ in range(self.NW):
+        #         lbx.append(0)
+        #         ubx.append(1)
+        # # mu
+        # for _ in range(self.N):
+        #     for _ in range(self.NW):
+        #         lbx.append(0)
+        #         ubx.append(1)
+        # # tau
+        # for _ in range(self.N):
+        #     for _ in range(self.NW):
+        #         lbx.append(0)
+        #         ubx.append(self.tol**2)
 
-        self.lb_x = lbx
-        self.ub_x = ubx
-        self.lb_g = lbg
-        self.ub_g = ubg
+        # self.lb_x = lbx
+        # self.ub_x = ubx
+        # self.lb_g = lbg
+        # self.ub_g = ubg
 
     def solve(self, x_guess=[]):
         self.set_initial_guess(x_guess)
@@ -451,7 +454,7 @@ class Planner:
         roll_ = np.arctan2(2 * (q0 * q1 + q2 * q3), 1 - 2 * (q1**2 + q2**2))
         pitch_ = np.arcsin(2 * (q0 * q2 - q3 * q1))
         yaw_ = np.arctan2(2 * (q0 * q3 + q1 * q2), 1 - 2 * (q2**2 + q3**2))
-        return roll_, pitch_, yaw_
+        return np.array([roll_, pitch_, yaw_])
 
     @staticmethod
     def rpy_to_quaternion(rpy):
