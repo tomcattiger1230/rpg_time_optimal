@@ -301,9 +301,9 @@ class Planner:
         for i in range(self.N):
             for j in range(self.NW):
                 # cc
-                # mid_result_ = self.average_state(x[:, i], x[:, i + 1])
-                # diff = mid_result_[0:3] - self.wp[:, j]
-                # g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
+                mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+                diff = mid_result_[0:3] - self.wp[:, j]
+                g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
                 # g.append(mu[j, i]*(ca.norm_2(mid_result_[:3]-self.wp[:, j])-tau[j]))
                 # change of mu
                 g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
@@ -322,12 +322,12 @@ class Planner:
             for j in range(self.NW-1):
                 g.append(lamg[j+1, i]-lamg[j, i])
 
-        for i in range(self.N):
-            for j in range(self.NW):
-                # cc
-                mid_result_ = self.average_state(x[:, i], x[:, i + 1])
-                diff = mid_result_[0:3] - self.wp[:, j]
-                g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
+        # for i in range(self.N):
+            # for j in range(self.NW):
+            #     # cc
+            #     mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+            #     diff = mid_result_[0:3] - self.wp[:, j]
+            #     g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
 
         self.unequal_constraint_length = np.shape(ca.vertcat(*g))[0] - self.equal_constraint_length
         print('Total number of unequal constraints {}:'.format(
@@ -376,10 +376,10 @@ class Planner:
                 lbg += [0.0]
                 ubg += [1.0]
 
-        for i in range(self.N):
-            for j in range(self.NW):
-                lbg += [0.0]
-                ubg += [0.01]
+        # for i in range(self.N):
+        #     for j in range(self.NW):
+        #         lbg += [0.0]
+        #         ubg += [0.01]
 
         lbx = [0.1]
         ubx = [150]
