@@ -31,14 +31,9 @@ class Planner:
 
         # Dynamics
         self.quad.get_Lagrangian_casadi()
-        # dynamics = quad.dynamics()
-        # self.fdyn = Integrator(dynamics)
 
         # Sizes
-        # self.NX = dynamics.size1_in(0)
-        # self.NU = dynamics.size1_in(1)
         self.NX = 6
-        # self.n_dmoc_states = int(self.quad.n_states / 2)
         self.NU = self.quad.n_controls
         self.NW = self.wp.shape[1]
 
@@ -128,7 +123,7 @@ class Planner:
         i_wp = 0
         # linearly interpolate max thrust and max omegas
         u0 = np.tile(np.array([self.quad.T_max] * 4),
-                     self.N + 1).reshape(-1, self.N+1)
+                     self.N + 1).reshape(-1, self.N + 1)
         mu0 = []
         tau0 = np.tile(np.array([0.0] * self.NW), self.N)
         lambda0 = [1.0] * self.NW
@@ -139,7 +134,8 @@ class Planner:
         vel_guess = (self.vel_guess * vel_guess /
                      norm_2(vel_guess)).full().flatten().tolist()
         x0 = [
-            p_init[0], p_init[1], p_init[2], rpy_init[0], rpy_init[1], rpy_init[2]
+            p_init[0], p_init[1], p_init[2], rpy_init[0], rpy_init[1],
+            rpy_init[2]
         ]
 
         pos_guess = p_init
@@ -166,7 +162,8 @@ class Planner:
             # else:
             #   vel_guess = (1 - interp) * 4 * self.vel_guess * direction
             # pos_guess += self.t_guess / self.N * vel_guess
-            x0 = x0 + pos_guess.full().flatten().tolist() + rpy_init.flatten().tolist()
+            x0 = x0 + pos_guess.full().flatten().tolist() + rpy_init.flatten(
+            ).tolist()
 
             if self.quad.rampup_dist > 0:
                 T_max = max(
@@ -209,8 +206,8 @@ class Planner:
         t = SX.sym('t', 1)
         u = SX.sym('u', self.NU, self.N + 1)
         x = SX.sym('x', self.NX, self.N + 1)
-        mu = SX.sym('mu', self.NW, self.N)
         lamg = SX.sym('lamg', self.NW, self.N + 1)
+        mu = SX.sym('mu', self.NW, self.N)
         tau = SX.sym('tau', self.NW, self.N)
         J = t
         self.dt = t / self.N
@@ -247,22 +244,22 @@ class Planner:
         if self.track.init_vel is not None:
             print('Using start velocity constraint')
             for i in range(3):
-                g.append((x[i, 1]-x[i, 0])/self.dt - self.track.init_vel[i])
+                g.append((x[i, 1] - x[i, 0]) / self.dt -
+                         self.track.init_vel[i])
         if self.track.init_att is not None:
             print('Using start attitude constraint')
             rpy_des_ = self.quaternion_to_rpy(self.track.init_att)
             for i in range(3):
-                g.append(rpy_des_[i]-x[i+3, 0])
+                g.append(rpy_des_[i] - x[i + 3, 0])
                 # g.append(x[i+3, -1])
         else:
             for i in range(3):
                 g.append(x[3 + i, 0])
         if self.track.init_omega is not None:
             print('Using start bodyrate constraint')
-            d_q_ = x[3:, 1]- x[3:, 0]
+            d_q_ = x[3:, 1] - x[3:, 0]
             for i in range(3):
-                q_dot_ = ca.atan2(ca.sin(d_q_[i]), ca.cos(
-                    d_q_[i] )) / self.dt
+                q_dot_ = ca.atan2(ca.sin(d_q_[i]), ca.cos(d_q_[i])) / self.dt
                 g.append(q_dot_ - self.track.init_omega[i])
         self.init_state_guess()
 
@@ -273,8 +270,9 @@ class Planner:
 
         # For each node ...
         for i in range(1, self.N):
-            f_d_nm1 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, i - 1],
-                                              u[:, i - 1], u[:, i])
+            f_d_nm1 = self.discrete_forces_v2(self.dt, self.quad.func_f,
+                                              x[:, i - 1], u[:, i - 1], u[:,
+                                                                          i])
             f_d_n = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, i],
                                             u[:, i], u[:, i + 1])
             sum = d_EulerLagrange(x[:, i - 1], x[:, i],
@@ -283,11 +281,13 @@ class Planner:
 
         # boundary condition (x_0, x_end)
         rpy_des_ = self.quaternion_to_rpy(self.track.init_att)
-        f_0 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, 0], u[:, 0],
-                                      u[:, 1])
+        f_0 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, 0],
+                                      u[:, 0], u[:, 1])
         g.append(
-            d_EulerLagrange_init(self.track.init_pos + rpy_des_.tolist(), self.track.init_vel + self.track.init_omega, x[:, 0],
-                                 x[:, 1]) + f_0)
+            d_EulerLagrange_init(self.track.init_pos +
+                                 rpy_des_.tolist(), self.track.init_vel +
+                                 self.track.init_omega, x[:, 0], x[:, 1]) +
+            f_0)
 
         # f_N_1 = self.discrete_forces_v2(self.dt, self.quad.func_f,
         #                                 x[:, self.N - 1],
@@ -296,7 +296,6 @@ class Planner:
         # g.append(
         #     d_EulerLagrange_end([self.wp[0, -1].__float__(), self.wp[1, -1].__float__(), self.wp[2, -1].__float__(),0, 0, 0], [0, 0, 0, 0, 0, 0],
         #                         x[:, self.N -1], x[:, self.N]) + f_N_1)
-
 
         for i in range(self.N):
             for j in range(self.NW):
@@ -313,14 +312,13 @@ class Planner:
 
         # omega constraints
         for i in range(self.N):
-            d_q_ = x[3:, i+1]- x[3:, i]
+            d_q_ = x[3:, i + 1] - x[3:, i]
             for i in range(3):
-                g.append(ca.atan2(ca.sin(d_q_[i]), ca.cos(
-                    d_q_[i] )) / self.dt)
+                g.append(ca.atan2(ca.sin(d_q_[i]), ca.cos(d_q_[i])) / self.dt)
 
-        for i in range(self.N+1):
-            for j in range(self.NW-1):
-                g.append(lamg[j+1, i]-lamg[j, i])
+        for i in range(self.N + 1):
+            for j in range(self.NW - 1):
+                g.append(lamg[j + 1, i] - lamg[j, i])
 
         for i in range(self.N):
             for j in range(self.NW):
@@ -329,7 +327,8 @@ class Planner:
                 diff = mid_result_[0:3] - self.wp[:, j]
                 g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
 
-        self.unequal_constraint_length = np.shape(ca.vertcat(*g))[0] - self.equal_constraint_length
+        self.unequal_constraint_length = np.shape(
+            ca.vertcat(*g))[0] - self.equal_constraint_length
         print('Total number of unequal constraints {}:'.format(
             self.unequal_constraint_length))
 
@@ -357,7 +356,6 @@ class Planner:
             lbg.append(0.0)
             ubg.append(0.0)
 
-
         # limit omega
         for i in range(self.N):
             omega_max_xy = self.quad.omega_max_xy
@@ -371,8 +369,8 @@ class Planner:
             lbg += [-omega_max_xy, -omega_max_xy, -self.quad.omega_max_z]
             ubg += [omega_max_xy, omega_max_xy, self.quad.omega_max_z]
 
-        for i in range(self.N+1):
-            for j in range(self.NW-1):
+        for i in range(self.N + 1):
+            for j in range(self.NW - 1):
                 lbg += [0.0]
                 ubg += [1.0]
 
@@ -385,7 +383,7 @@ class Planner:
         ubx = [150]
 
         # U
-        for i in range(self.N+1):
+        for i in range(self.N + 1):
             T_max = self.quad.T_max
             if self.quad.rampup_dist > 0:
                 T_max = max(
@@ -409,10 +407,20 @@ class Planner:
                         self.quad.omega_max_xy), self.quad.omega_ramp_start)
 
             lbx = lbx + [
-                -np.inf, -np.inf, 0.5, -np.inf, -np.inf, -np.inf,
+                -np.inf,
+                -np.inf,
+                0.5,
+                -np.inf,
+                -np.inf,
+                -np.inf,
             ]
             ubx = ubx + [
-                np.inf, np.inf, 100.0, np.inf, np.inf, np.inf,
+                np.inf,
+                np.inf,
+                100.0,
+                np.inf,
+                np.inf,
+                np.inf,
             ]
 
         # lambda
