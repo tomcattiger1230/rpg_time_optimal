@@ -214,8 +214,6 @@ class Planner:
         ])
 
     def setup(self):
-        x = []
-
         g = []
 
         # Total time variable
@@ -267,7 +265,17 @@ class Planner:
                 g.append(mu[j, i] * (dot(diff, diff) - tau[j]))
                 # change of mu
                 g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
-        self.equal_constraint_length = len(g)
+        self.equal_constraint_length = np.shape(ca.vertcat(*g))[0]
+        print('Total number of equal constraints {}:'.format(
+            self.equal_constraint_length))
+
+        for i in range(self.N+1):
+            for j in range(self.NW-1):
+                g.append(lamg[j+1, i]-lamg[j, i])
+
+        self.unequal_constraint_length = np.shape(ca.vertcat(*g))[0] - self.equal_constraint_length
+        print('Total number of unequal constraints {}:'.format(
+            self.unequal_constraint_length))
 
         # Reformat
         self.x = ca.vcat([
@@ -292,6 +300,11 @@ class Planner:
         for _ in range(self.equal_constraint_length):
             lbg.append(0.0)
             ubg.append(0.0)
+
+        for i in range(self.N+1):
+            for j in range(self.NW-1):
+                lbg += [0.0]
+                ubg += [1.0]
 
         lbx = [0.1]
         ubx = [150]

@@ -1,4 +1,4 @@
-from casadi import MX, DM, SX,vertcat, mtimes, Function, inv, cross, sqrt, norm_2
+from casadi import MX, DM, SX, vertcat, mtimes, Function, inv, cross, sqrt, norm_2
 import yaml
 from quaternion import *
 import casadi as ca
@@ -18,6 +18,7 @@ class Quad:
         self.rampup_dist = 0
         self.T_ramp_start = 5
         self.omega_ramp_start = 3
+
 
         self.v_max = None
         self.cd = 0.0
@@ -137,22 +138,23 @@ class Quad:
                               ca.cos(phi) * ca.cos(theta)]])
         bW = ca.mtimes([T_matrix, np.array([d_phi, d_theta, d_psi])])
         # the angle velocity of uav in the frame of world
-        Ib = np.array([[self.Ixx, 0, 0], [0, self.Iyy, 0], [0, 0, self.Izz]])
+        # Ib = np.array([[self.Ixx, 0, 0], [0, self.Iyy, 0], [0, 0, self.Izz]])
+        Ib = self.I
 
         # Kinetic energy
-        K = 1 / 2 * ca.mtimes([self.mass, p_dot.T, p_dot])\
+        K = 1 / 2 * ca.mtimes([self.m, p_dot.T, p_dot])\
             + 1 / 2 * ca.mtimes([bW.T, Ib, bW])  # kinetic energy of uav
 
         # potential energy
-        U = ca.mtimes([self.mass, self.g_, e3.T, p])
+        U = ca.mtimes([self.m, self.g, e3.T, p])
 
         L = K - U
         # Lagrangian = ca.Function('Lagrangian',[states],[L])
-        self.fct_L = ca.Function('fct_L', [states_2, d_states], [L])
+        self.func_L = ca.Function('fct_L', [states_2, d_states], [L])
 
         L_ddstates = ca.gradient(L, d_states)
         # L_dstates = ca.gradient(L, states_2)
-        self.fct_L_ddstates = ca.Function('fct_L_ddstates',
+        self.func_L_ddstates = ca.Function('fct_L_ddstates',
                                           [states_2, d_states], [L_ddstates])
         # all input forces from motors
         U1 = SX.sym("U1")  # motor 1
@@ -167,33 +169,35 @@ class Quad:
         moment_z = (U1 + U3 - U2 - U4) * self.ctau
         rhs_f = ca.vertcat(f_xyz, moment_x, moment_y, moment_z)
         # force function
-        self.fct_f = ca.Function('fct_f', [states_2, u], [rhs_f])
+        self.func_f = ca.Function('func_f', [states_2, u], [rhs_f])
 
         self.n_states = states.size()[0]
         self.n_controls = u.size()[0]
 
-    def dynamics(self):
-        p = MX.sym('p', 3)
-        v = MX.sym('v', 3)
-        q = MX.sym('q', 4)
-        w = MX.sym('w', 3)
-        T = MX.sym('thrust', 4)
+        # return fct_L, fct_f, fct_L_ddstates
 
-        x = vertcat(p, v, q, w)
-        u = vertcat(T)
+    # def dynamics(self):
+    #     p = MX.sym('p', 3)
+    #     v = MX.sym('v', 3)
+    #     q = MX.sym('q', 4)
+    #     w = MX.sym('w', 3)
+    #     T = MX.sym('thrust', 4)
 
-        g = DM([0, 0, -self.g])
+    #     x = vertcat(p, v, q, w)
+    #     u = vertcat(T)
 
-        x_dot = vertcat(
-            v,
-            rotate_quat(q, vertcat(0, 0,
-                                   (T[0] + T[1] + T[2] + T[3]) / self.m)) + g -
-            v * self.cd, 0.5 * quat_mult(q, vertcat(0, w)),
-            mtimes(
-                self.I_inv,
-                vertcat(self.l * (T[0] - T[1] - T[2] + T[3]),
-                        self.l * (-T[0] - T[1] + T[2] + T[3]),
-                        self.ctau * (T[0] - T[1] + T[2] - T[3])) -
-                cross(w, mtimes(self.I, w))))
-        fx = Function('f', [x, u], [x_dot], ['x', 'u'], ['x_dot'])
-        return fx
+    #     g = DM([0, 0, -self.g])
+
+    #     x_dot = vertcat(
+    #         v,
+    #         rotate_quat(q, vertcat(0, 0,
+    #                                (T[0] + T[1] + T[2] + T[3]) / self.m)) + g -
+    #         v * self.cd, 0.5 * quat_mult(q, vertcat(0, w)),
+    #         mtimes(
+    #             self.I_inv,
+    #             vertcat(self.l * (T[0] - T[1] - T[2] + T[3]),
+    #                     self.l * (-T[0] - T[1] + T[2] + T[3]),
+    #                     self.ctau * (T[0] - T[1] + T[2] - T[3])) -
+    #             cross(w, mtimes(self.I, w))))
+    #     fx = Function('f', [x, u], [x_dot], ['x', 'u'], ['x_dot'])
+    #     return fx

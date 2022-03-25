@@ -6,7 +6,7 @@ import os
 Author: Wei Luo
 Date: 2022-03-15 13:58:38
 LastEditors: Wei Luo
-LastEditTime: 2022-03-25 00:31:43
+LastEditTime: 2022-03-25 13:06:33
 Note: Note
 '''
 
@@ -18,7 +18,7 @@ from quad_dmoc import Quad
 # from integrator import RungeKutta4
 from planner_itm_dmoc import Planner
 from trajectory_itm_dmoc import Trajectory
-from plot import CallbackPlot
+from plot_itm_dmoc import CallbackPlot
 
 track = Track(BASEPATH + "/tracks/track.yaml")
 quad = Quad(BASEPATH + "/quads/quad.yaml")
@@ -35,9 +35,9 @@ planner = Planner(quad, track, {
     'vel_guess': 3.0
 })
 planner.setup()
-# planner.set_iteration_callback(cp)
-# x = planner.solve()
+planner.set_iteration_callback(cp)
+x = planner.solve()
 
-# traj = Trajectory(x, NPW=planner.NPW, wp=planner.wp)
-# traj.save(BASEPATH + '/example/result_cpc_format.csv', False)
-# traj.save(BASEPATH + '/example/result.csv', True)
+traj = Trajectory(x, NPW=planner.NPW, wp=planner.wp)
+traj.save(BASEPATH + '/example/result_cpc_format_itm_dmoc.csv', False)
+traj.save(BASEPATH + '/example/result_itm_dmoc.csv', True)

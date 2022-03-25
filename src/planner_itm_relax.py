@@ -263,15 +263,25 @@ class Planner:
                 # diff = x[0:3, i] - self.wp[:, j]
                 # g.append(mu[j, i] * (dot(diff, diff) - tau[j]))
 
-        self.equal_constraint_length = len(g)
+        self.equal_constraint_length = np.shape(ca.vertcat(*g))[0]
+        print('Total number of equal constraints {}:'.format(
+            self.equal_constraint_length))
+
+
 
         for i in range(self.N):
             for j in range(self.NW):
                 # cc
                 diff = x[0:3, i] - self.wp[:, j]
                 g.append(mu[j, i] * (dot(diff, diff) - tau[j]))
-                pass
-        self.unequal_constraint_length = len(g) - self.equal_constraint_length
+
+        for i in range(self.N+1):
+            for j in range(self.NW-1):
+                g.append(lamg[j+1, i]-lamg[j, i])
+
+        self.unequal_constraint_length = np.shape(ca.vertcat(*g))[0] - self.equal_constraint_length
+        print('Total number of unequal constraints {}:'.format(
+            self.unequal_constraint_length))
 
         # Reformat
         self.x = ca.vcat([
@@ -297,9 +307,15 @@ class Planner:
             lbg.append(0.0)
             ubg.append(0.0)
 
-        for _ in range(self.unequal_constraint_length):
-            lbg.append(0.0)
-            ubg.append(0.01)
+        for i in range(self.N):
+            for j in range(self.NW):
+                lbg += [0.0]
+                ubg += [0.01]
+        for i in range(self.N+1):
+            for j in range(self.NW-1):
+                lbg += [0.0]
+                ubg += [1.0]
+
 
         lbx = [0.1]
         ubx = [150]

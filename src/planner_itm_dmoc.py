@@ -128,7 +128,7 @@ class Planner:
         i_wp = 0
         # linearly interpolate max thrust and max omegas
         u0 = np.tile(np.array([self.quad.T_max] * 4),
-                     self.N + 1).reshape(-1, self.N)
+                     self.N + 1).reshape(-1, self.N+1)
         mu0 = []
         tau0 = np.tile(np.array([0.0] * self.NW), self.N)
         lambda0 = [1.0] * self.NW
@@ -193,7 +193,7 @@ class Planner:
         print("N: ", self.N)
         print(np.array(x0).shape)
         x0 = np.array(x0).reshape(-1, self.N + 1)
-        print("x guess", x0.reshape(-1, 1)[:13])
+        print("x guess", x0.reshape(-1, 1)[:6])
         lambda0 = np.array(lambda0).reshape(self.N + 1, self.NW)
         self.guess_state = ca.vcat([
             self.t_guess,
@@ -221,14 +221,14 @@ class Planner:
         q_n = SX.sym('qn', self.NX)
         q_np1 = SX.sym('qnp1', self.NX)
         D2L_d = ca.gradient(
-            self.discrete_lagrange(self.dt, q_nm1, q_n, self.quad.fct_L), q_n)
+            self.discrete_lagrange(self.dt, q_nm1, q_n, self.quad.func_L), q_n)
         D1L_d = ca.gradient(
-            self.discrete_lagrange(self.dt, q_n, q_np1, self.quad.fct_L), q_n)
+            self.discrete_lagrange(self.dt, q_n, q_np1, self.quad.func_L), q_n)
         d_EulerLagrange = ca.Function('dEL', [q_nm1, q_n, q_np1],
                                       [D2L_d + D1L_d])
-        q_b = SX.sym('q_b', self.n_dmoc_states)
-        q_b_dot = SX.sym('q_b_dot', self.n_dmoc_states)
-        D2L = self.quad.fct_L_ddstates(q_b, q_b_dot)
+        q_b = SX.sym('q_b', self.NX)
+        q_b_dot = SX.sym('q_b_dot', self.NX)
+        D2L = self.quad.func_L_ddstates(q_b, q_b_dot)
         d_EulerLagrange_init = ca.Function('dEl_init',
                                            [q_b, q_b_dot, q_n, q_np1],
                                            [D2L + D1L_d])
@@ -236,7 +236,6 @@ class Planner:
                                           [q_b, q_b_dot, q_nm1, q_n],
                                           [-D2L + D2L_d])
 
-        x = []
         g = []
 
         if self.track.init_pos is not None:
@@ -244,6 +243,7 @@ class Planner:
             print('Using start position constraint')
             for i in range(3):
                 g.append(x[i, 0] - self.track.init_pos[i])
+                # g.append(x[i, -1]-self.wp[i, -1].__float__())
         if self.track.init_vel is not None:
             print('Using start velocity constraint')
             for i in range(3):
@@ -251,126 +251,190 @@ class Planner:
         if self.track.init_att is not None:
             print('Using start attitude constraint')
             rpy_des_ = self.quaternion_to_rpy(self.track.init_att)
-            rpy_org_ = self.quaternion_to_rpy(x[6:10, 0])
             for i in range(3):
-                g.append(rpy_des_[i]-rpy_org_[i])
+                g.append(rpy_des_[i]-x[i+3, 0])
+                # g.append(x[i+3, -1])
         else:
             for i in range(3):
                 g.append(x[3 + i, 0])
         if self.track.init_omega is not None:
             print('Using start bodyrate constraint')
-            rpy_0_ = self.quaternion_to_rpy(x[6:10, 0])
-            rpy_1_ = self.quaternion_to_rpy(x[6:10, 1])
-            d_q_ = rpy_1_ - rpy_0_
+            d_q_ = x[3:, 1]- x[3:, 0]
             for i in range(3):
                 q_dot_ = ca.atan2(ca.sin(d_q_[i]), ca.cos(
-                    d_q_[i] )) / dt
+                    d_q_[i] )) / self.dt
                 g.append(q_dot_ - self.track.init_omega[i])
         self.init_state_guess()
 
-        # # Bound inital progress variable to 1
-        # for i in range(self.NW):
-        #     g.append(lamg[i, 0] - 1)
-        #     g.append(lamg[i, -1])
+        # Bound inital progress variable to 1
+        for i in range(self.NW):
+            g.append(lamg[i, 0] - 1)
+            g.append(lamg[i, -1])
 
-        # # For each node ...
-        # for i in range(self.N):
-        #     # ... add next state
-        #     Fnext = self.fdyn(x=x[:, i], u=u[:, i], dt=t / self.N)
-        #     xn = Fnext['xn']
-        #     for k in range(self.NX):
-        #         g.append(xn[k] - x[k, i + 1])
+        # For each node ...
+        for i in range(1, self.N):
+            f_d_nm1 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, i - 1],
+                                              u[:, i - 1], u[:, i])
+            f_d_n = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, i],
+                                            u[:, i], u[:, i + 1])
+            sum = d_EulerLagrange(x[:, i - 1], x[:, i],
+                                  x[:, i + 1]) + f_d_nm1 + f_d_n
+            g.append(sum)
 
-        #     for j in range(self.NW):
-        #         # cc
-        #         diff = x[0:3, i] - self.wp[:, j]
-        #         g.append(mu[j, i] * (dot(diff, diff) - tau[j]))
-        #         # change of mu
-        #         g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
-        # self.equal_constraint_length = len(g)
+        # boundary condition (x_0, x_end)
+        rpy_des_ = self.quaternion_to_rpy(self.track.init_att)
+        f_0 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, 0], u[:, 0],
+                                      u[:, 1])
+        g.append(
+            d_EulerLagrange_init(self.track.init_pos + rpy_des_.tolist(), self.track.init_vel + self.track.init_omega, x[:, 0],
+                                 x[:, 1]) + f_0)
 
-        # # Reformat
-        # self.x = ca.vcat([
-        #     t,
-        #     ca.reshape(u, -1, 1),
-        #     ca.reshape(x, -1, 1),
-        #     ca.reshape(lamg, -1, 1),
-        #     ca.reshape(mu, -1, 1),
-        #     ca.reshape(tau, -1, 1)
-        # ])
+        # f_N_1 = self.discrete_forces_v2(self.dt, self.quad.func_f,
+        #                                 x[:, self.N - 1],
+        #                                 u[:, self.N - 1],
+        #                                 u[:, self.N ])
+        # g.append(
+        #     d_EulerLagrange_end([self.wp[0, -1].__float__(), self.wp[1, -1].__float__(), self.wp[2, -1].__float__(),0, 0, 0], [0, 0, 0, 0, 0, 0],
+        #                         x[:, self.N -1], x[:, self.N]) + f_N_1)
 
-        # self.g = ca.vertcat(*g)
-        # self.J = J
 
-        # # Construct Non-Linear Program
-        # self.nlp = {'f': self.J, 'x': self.x, 'g': self.g}
+        for i in range(self.N):
+            for j in range(self.NW):
+                # cc
+                # mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+                # diff = mid_result_[0:3] - self.wp[:, j]
+                # g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
+                # g.append(mu[j, i]*(ca.norm_2(mid_result_[:3]-self.wp[:, j])-tau[j]))
+                # change of mu
+                g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
+        self.equal_constraint_length = np.shape(ca.vertcat(*g))[0]
+        print('Total number of equal constraints {}:'.format(
+            self.equal_constraint_length))
 
-        # # constraints
-        # lbg = []
-        # ubg = []
-        # # equality constraints
-        # for _ in range(self.equal_constraint_length):
-        #     lbg.append(0.0)
-        #     ubg.append(0.0)
+        # omega constraints
+        for i in range(self.N):
+            d_q_ = x[3:, i+1]- x[3:, i]
+            for i in range(3):
+                g.append(ca.atan2(ca.sin(d_q_[i]), ca.cos(
+                    d_q_[i] )) / self.dt)
 
-        # lbx = [0.1]
-        # ubx = [150]
+        for i in range(self.N+1):
+            for j in range(self.NW-1):
+                g.append(lamg[j+1, i]-lamg[j, i])
 
-        # # U
-        # for i in range(self.N):
-        #     T_max = self.quad.T_max
-        #     if self.quad.rampup_dist > 0:
-        #         T_max = max(
-        #             min(
-        #                 self.interpolate(0, self.quad.T_ramp_start,
-        #                                  self.quad.rampup_dist,
-        #                                  self.quad.T_max, i * self.dpn),
-        #                 self.quad.T_max), self.quad.T_ramp_start)
-        #     lbx += [self.quad.T_min] * self.NU
-        #     ubx += [T_max] * self.NU
+        for i in range(self.N):
+            for j in range(self.NW):
+                # cc
+                mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+                diff = mid_result_[0:3] - self.wp[:, j]
+                g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
 
-        # # X
-        # for i in range(self.N + 1):
-        #     omega_max_xy = self.quad.omega_max_xy
-        #     if self.quad.rampup_dist > 0:
-        #         omega_max_xy = max(
-        #             min(
-        #                 self.interpolate(0, self.quad.omega_ramp_start,
-        #                                  self.quad.rampup_dist,
-        #                                  self.quad.omega_max_xy, i * self.dpn),
-        #                 self.quad.omega_max_xy), self.quad.omega_ramp_start)
+        self.unequal_constraint_length = np.shape(ca.vertcat(*g))[0] - self.equal_constraint_length
+        print('Total number of unequal constraints {}:'.format(
+            self.unequal_constraint_length))
 
-        #     lbx = lbx + [
-        #         -np.inf, -np.inf, 0.5, -np.inf, -np.inf, -np.inf, -np.inf,
-        #         -np.inf, -np.inf, -np.inf, -omega_max_xy, -omega_max_xy,
-        #         -self.quad.omega_max_z
-        #     ]
-        #     ubx = ubx + [
-        #         np.inf, np.inf, 100.0, np.inf, np.inf, np.inf, np.inf, np.inf,
-        #         np.inf, np.inf, omega_max_xy, omega_max_xy,
-        #         self.quad.omega_max_z
-        #     ]
+        # Reformat
+        self.x = ca.vcat([
+            t,
+            ca.reshape(u, -1, 1),
+            ca.reshape(x, -1, 1),
+            ca.reshape(lamg, -1, 1),
+            ca.reshape(mu, -1, 1),
+            ca.reshape(tau, -1, 1)
+        ])
 
-        # # lambda
-        # for _ in range(self.N + 1):
-        #     for _ in range(self.NW):
-        #         lbx.append(0)
-        #         ubx.append(1)
-        # # mu
-        # for _ in range(self.N):
-        #     for _ in range(self.NW):
-        #         lbx.append(0)
-        #         ubx.append(1)
-        # # tau
-        # for _ in range(self.N):
-        #     for _ in range(self.NW):
-        #         lbx.append(0)
-        #         ubx.append(self.tol**2)
+        self.g = ca.vertcat(*g)
+        self.J = J
 
-        # self.lb_x = lbx
-        # self.ub_x = ubx
-        # self.lb_g = lbg
-        # self.ub_g = ubg
+        # Construct Non-Linear Program
+        self.nlp = {'f': self.J, 'x': self.x, 'g': self.g}
+
+        # constraints
+        lbg = []
+        ubg = []
+        # equality constraints
+        for _ in range(self.equal_constraint_length):
+            lbg.append(0.0)
+            ubg.append(0.0)
+
+
+        # limit omega
+        for i in range(self.N):
+            omega_max_xy = self.quad.omega_max_xy
+            if self.quad.rampup_dist > 0:
+                omega_max_xy = max(
+                    min(
+                        self.interpolate(0, self.quad.omega_ramp_start,
+                                         self.quad.rampup_dist,
+                                         self.quad.omega_max_xy, i * self.dpn),
+                        self.quad.omega_max_xy), self.quad.omega_ramp_start)
+            lbg += [-omega_max_xy, -omega_max_xy, -self.quad.omega_max_z]
+            ubg += [omega_max_xy, omega_max_xy, self.quad.omega_max_z]
+
+        for i in range(self.N+1):
+            for j in range(self.NW-1):
+                lbg += [0.0]
+                ubg += [1.0]
+
+        for i in range(self.N):
+            for j in range(self.NW):
+                lbg += [0.0]
+                ubg += [0.01]
+
+        lbx = [0.1]
+        ubx = [150]
+
+        # U
+        for i in range(self.N+1):
+            T_max = self.quad.T_max
+            if self.quad.rampup_dist > 0:
+                T_max = max(
+                    min(
+                        self.interpolate(0, self.quad.T_ramp_start,
+                                         self.quad.rampup_dist,
+                                         self.quad.T_max, i * self.dpn),
+                        self.quad.T_max), self.quad.T_ramp_start)
+            lbx += [self.quad.T_min] * self.NU
+            ubx += [T_max] * self.NU
+
+        # X
+        for i in range(self.N + 1):
+            omega_max_xy = self.quad.omega_max_xy
+            if self.quad.rampup_dist > 0:
+                omega_max_xy = max(
+                    min(
+                        self.interpolate(0, self.quad.omega_ramp_start,
+                                         self.quad.rampup_dist,
+                                         self.quad.omega_max_xy, i * self.dpn),
+                        self.quad.omega_max_xy), self.quad.omega_ramp_start)
+
+            lbx = lbx + [
+                -np.inf, -np.inf, 0.5, -np.inf, -np.inf, -np.inf,
+            ]
+            ubx = ubx + [
+                np.inf, np.inf, 100.0, np.inf, np.inf, np.inf,
+            ]
+
+        # lambda
+        for _ in range(self.N + 1):
+            for _ in range(self.NW):
+                lbx.append(0)
+                ubx.append(1)
+        # mu
+        for _ in range(self.N):
+            for _ in range(self.NW):
+                lbx.append(0)
+                ubx.append(1)
+        # tau
+        for _ in range(self.N):
+            for _ in range(self.NW):
+                lbx.append(0)
+                ubx.append(self.tol**2)
+
+        self.lb_x = lbx
+        self.ub_x = ubx
+        self.lb_g = lbg
+        self.ub_g = ubg
 
     def solve(self, x_guess=[]):
         self.set_initial_guess(x_guess)
@@ -471,3 +535,22 @@ class Planner:
         y_ = cr * sp * cy + sr * cp * sy
         z_ = cr * cp * sy - sr * sp * cy
         return np.array([w_, x_, y_, z_])
+
+    @staticmethod
+    def discrete_forces_v2(dt, f, q, u_n, u_np1):
+        f_d = 1 / 4. * dt * (f(q, u_n) + f(q, u_np1))
+        return f_d
+
+    @staticmethod
+    def average_state(state_1, state_2, num_state=6):
+        # average whole state
+        assert state_1.shape == (num_state,
+                                 1) and state_2.shape == (num_state,
+                                                          1), state_1.shape
+        q = (state_1 + state_2) / 2
+        # mean of euler angles
+        for i in range(3, num_state):
+            s_ = ca.sin(state_1[i]) + ca.sin(state_2[i])
+            c_ = ca.cos(state_1[i]) + ca.cos(state_2[i])
+            q[i] = ca.atan2(s_, c_)
+        return q

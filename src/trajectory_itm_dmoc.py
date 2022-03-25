@@ -38,7 +38,7 @@ class Trajectory:
             raise Exception(
                 'Number of nodes per waypoint (NPW) must be provided!')
 
-        self.NX = 13
+        self.NX = 6
         self.NU = 4
         self.NPW = NPW
 
@@ -58,20 +58,33 @@ class Trajectory:
     def parse(self):
         self.t_total = self.x[0]
         self.t_x = ca.DM(np.linspace(0, self.t_total, self.N + 1, True))
-        self.t_u = self.t_x[0:self.N]
+        self.t_u = self.t_x[0:self.N+1]
         self.u = self.x[1:(self.N + 1) * self.NU + 1]
         self.u = self.u.reshape(-1, self.NU).T
         self.state = self.x[(self.N + 1) * self.NU + 1:(self.N + 1) * self.NU +
                             1 + (self.N + 1) * self.NX]
         self.state = self.state.reshape(-1, self.NX)
         self.p = self.state[:, :3].T
-        self.v = self.state[:, 3:6].T
-        self.q = self.state[:, 6:10].T
-        self.w = self.state[:, 10:].T
+        self.v = np.zeros(self.p.T.shape)
+        for i in range(self.N):
+            self.v[i] = (self.state[i+1, :3] - self.state[i, :3])/self.t_total*self.N
+        self.v = self.v.T
+        self.q = np.zeros((self.N+1, 4))
+        for i in range(self.N+1):
+            self.q[i] = self.rpy_to_quaternion(self.state[i, 3:])
+        self.q = self.q.T
+        self.w = np.zeros((self.N+1, 3))
+        for i in range(self.N):
+            d_q = self.state[i+1, 3:] - self.state[i, 3:]
+            for j in range(3):
+                q_dot = ca.atan2(ca.sin(d_q[j]), ca.cos(
+                    d_q[j])) / self.t_total * self.N
+                self.w[i, j] = q_dot
+        self.w = self.w.T
 
         dt = self.t_total / self.N
-        self.a_lin = np.zeros((3, self.N + 1))
-        self.a_rot = np.zeros((3, self.N + 1))
+        self.a_lin = np.zeros((3, self.N+1 ))
+        self.a_rot = np.zeros((3, self.N+1 ))
 
         self.a_lin[:, 0:-1] = np.diff(self.v) / dt
         self.a_rot[:, 0:-1] = np.diff(self.w) / dt
@@ -477,7 +490,7 @@ class Trajectory:
                 if prev is None:
                     prev = ax.plot(self.t_u, self.nu[i, :], nstyle, **kwargs)
                 else:
-                    prev = ax.plot(self.t_u,
+                    prev = ax.plot(self.t_u[1:],
                                    self.nu[i, :],
                                    nstyle,
                                    color=prev[0].get_color(),
@@ -489,7 +502,7 @@ class Trajectory:
                 p += prev
             if plot_tau:
                 if prev is None:
-                    prev = ax.plot(self.t_u, self.tau[i, :], tstyle, **kwargs)
+                    prev = ax.plot(self.t_u[1:], self.tau[i, :], tstyle, **kwargs)
                 else:
                     prev = ax.plot(self.t_u,
                                    self.tau[i, :],
@@ -590,3 +603,19 @@ class Trajectory:
 
             self.parse()
             return self
+
+    @staticmethod
+    def rpy_to_quaternion(rpy):
+        roll_, pitch_, yaw_ = rpy
+        cy = np.cos(yaw_ * 0.5)
+        sy = np.sin(yaw_ * 0.5)
+        cp = np.cos(pitch_ * 0.5)
+        sp = np.sin(pitch_ * 0.5)
+        cr = np.cos(roll_ * 0.5)
+        sr = np.sin(roll_ * 0.5)
+
+        w_ = cr * cp * cy + sr * sp * sy
+        x_ = sr * cp * cy - cr * sp * sy
+        y_ = cr * sp * cy + sr * cp * sy
+        z_ = cr * cp * sy - sr * sp * cy
+        return np.array([w_, x_, y_, z_])
