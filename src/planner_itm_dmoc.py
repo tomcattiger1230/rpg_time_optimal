@@ -235,38 +235,48 @@ class Planner:
 
         g = []
 
+        init_full_state = [0.0] * (self.NX * 2)
+
         if self.track.init_pos is not None:
             # if self.track.init_pos is not None and not self.track.ring:
             print('Using start position constraint')
-            for i in range(3):
-                g.append(x[i, 0] - self.track.init_pos[i])
-                # g.append(x[i, -1]-self.wp[i, -1].__float__())
+            init_full_state[:3] = self.track.init_pos
+            # for i in range(3):
+            #     g.append(x[i, 0] - self.track.init_pos[i])
+            # g.append(x[i, -1]-self.wp[i, -1].__float__())
         if self.track.init_vel is not None:
             print('Using start velocity constraint')
-            for i in range(3):
-                g.append((x[i, 1] - x[i, 0]) / self.dt -
-                         self.track.init_vel[i])
+            init_full_state[6:9] = self.track.init_vel
+            # for i in range(3):
+            #     g.append((x[i, 1] - x[i, 0]) / self.dt -
+            #              self.track.init_vel[i])
         if self.track.init_att is not None:
             print('Using start attitude constraint')
             rpy_des_ = self.quaternion_to_rpy(self.track.init_att)
-            for i in range(3):
-                g.append(rpy_des_[i] - x[i + 3, 0])
-                # g.append(x[i+3, -1])
-        else:
-            for i in range(3):
-                g.append(x[3 + i, 0])
+            init_full_state[3:6] = rpy_des_
+            # for i in range(3):
+            #     g.append(rpy_des_[i] - x[i + 3, 0])
+            # g.append(x[i+3, -1])
+        # else:
+        #     for i in range(3):
+        #         g.append(x[3 + i, 0])
         if self.track.init_omega is not None:
             print('Using start bodyrate constraint')
             d_q_ = x[3:, 1] - x[3:, 0]
+            q_dot_ = []
             for i in range(3):
-                q_dot_ = ca.atan2(ca.sin(d_q_[i]), ca.cos(d_q_[i])) / self.dt
-                g.append(q_dot_ - self.track.init_omega[i])
+                q_dot_.append(
+                    ca.atan2(ca.sin(d_q_[i]), ca.cos(d_q_[i])) / self.dt)
+            init_full_state[9:12] = q_dot_
+            # g.append(q_dot_ - self.track.init_omega[i])
+        print(init_full_state)
+        g.append(x[:, 0] - init_full_state[:self.NX])
+
         self.init_state_guess()
 
         # Bound inital progress variable to 1
-        for i in range(self.NW):
-            g.append(lamg[i, 0] - 1)
-            g.append(lamg[i, -1])
+        g.append(lamg[:, 0] - 1)
+        g.append(lamg[:, self.N])
 
         # For each node ...
         for i in range(1, self.N):
@@ -284,9 +294,8 @@ class Planner:
         f_0 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, 0],
                                       u[:, 0], u[:, 1])
         g.append(
-            d_EulerLagrange_init(self.track.init_pos +
-                                 rpy_des_.tolist(), self.track.init_vel +
-                                 self.track.init_omega, x[:, 0], x[:, 1]) +
+            d_EulerLagrange_init(init_full_state[:self.NX], self.track.init_vel
+                                 + self.track.init_omega, x[:, 0], x[:, 1]) +
             f_0)
 
         # f_N_1 = self.discrete_forces_v2(self.dt, self.quad.func_f,
@@ -298,14 +307,18 @@ class Planner:
         #                         x[:, self.N -1], x[:, self.N]) + f_N_1)
 
         for i in range(self.N):
+            # change of mu
+            g.append(lamg[:, i] - lamg[:, i + 1] - mu[:, i])
+
+        for i in range(self.N):
             for j in range(self.NW):
                 # cc
                 mid_result_ = self.average_state(x[:, i], x[:, i + 1])
                 diff = mid_result_[0:3] - self.wp[:, j]
+                # g.append(
+                #     mu[j, i] *
+                #     (ca.norm_2(mid_result_[:3] - self.wp[:, j]) - tau[j, i]))
                 g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
-                # g.append(mu[j, i]*(ca.norm_2(mid_result_[:3]-self.wp[:, j])-tau[j]))
-                # change of mu
-                g.append(lamg[j, i] - lamg[j, i + 1] - mu[j, i])
         self.equal_constraint_length = np.shape(ca.vertcat(*g))[0]
         print('Total number of equal constraints {}:'.format(
             self.equal_constraint_length))
@@ -321,11 +334,14 @@ class Planner:
                 g.append(lamg[j + 1, i] - lamg[j, i])
 
         # for i in range(self.N):
-            # for j in range(self.NW):
-            #     # cc
-            #     mid_result_ = self.average_state(x[:, i], x[:, i + 1])
-            #     diff = mid_result_[0:3] - self.wp[:, j]
-            #     g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
+        #     for j in range(self.NW):
+        #         # cc
+        #         mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+        #         # diff = mid_result_[0:3] - self.wp[:, j]
+        #         g.append(
+        #             mu[j, i] *
+        #             (ca.norm_2(mid_result_[:3] - self.wp[:, j]) - tau[j, i]))
+        #         # g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
 
         self.unequal_constraint_length = np.shape(
             ca.vertcat(*g))[0] - self.equal_constraint_length
@@ -437,7 +453,8 @@ class Planner:
         for _ in range(self.N):
             for _ in range(self.NW):
                 lbx.append(0)
-                ubx.append(self.tol**2)
+                # ubx.append(self.tol**2)
+                ubx.append(self.tol)
 
         self.lb_x = lbx
         self.ub_x = ubx
