@@ -310,15 +310,15 @@ class Planner:
             # change of mu
             g.append(lamg[:, i] - lamg[:, i + 1] - mu[:, i])
 
-        for i in range(self.N):
-            for j in range(self.NW):
-                # cc
-                mid_result_ = self.average_state(x[:, i], x[:, i + 1])
-                diff = mid_result_[0:3] - self.wp[:, j]
-                # g.append(
-                #     mu[j, i] *
-                #     (ca.norm_2(mid_result_[:3] - self.wp[:, j]) - tau[j, i]))
-                g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
+        # for i in range(self.N):
+        #     for j in range(self.NW):
+        #         # cc
+        #         mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+        #         diff = mid_result_[0:3] - self.wp[:, j]
+        #         # g.append(
+        #         #     mu[j, i] *
+        #         #     (ca.norm_2(mid_result_[:3] - self.wp[:, j]) - tau[j, i]))
+        #         g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
         self.equal_constraint_length = np.shape(ca.vertcat(*g))[0]
         print('Total number of equal constraints {}:'.format(
             self.equal_constraint_length))
@@ -333,15 +333,15 @@ class Planner:
             for j in range(self.NW - 1):
                 g.append(lamg[j + 1, i] - lamg[j, i])
 
-        # for i in range(self.N):
-        #     for j in range(self.NW):
-        #         # cc
-        #         mid_result_ = self.average_state(x[:, i], x[:, i + 1])
-        #         # diff = mid_result_[0:3] - self.wp[:, j]
-        #         g.append(
-        #             mu[j, i] *
-        #             (ca.norm_2(mid_result_[:3] - self.wp[:, j]) - tau[j, i]))
-        #         # g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
+        for i in range(self.N):
+            for j in range(self.NW):
+                # cc
+                mid_result_ = self.average_state(x[:, i], x[:, i + 1])
+                # diff = mid_result_[0:3] - self.wp[:, j]
+                g.append(
+                    mu[j, i] *
+                    (ca.norm_2(mid_result_[:3] - self.wp[:, j]) - tau[j, i]))
+                # g.append(mu[j, i] * (dot(diff, diff) - tau[j, i]))
 
         self.unequal_constraint_length = np.shape(
             ca.vertcat(*g))[0] - self.equal_constraint_length
@@ -390,10 +390,10 @@ class Planner:
                 lbg += [0.0]
                 ubg += [1.0]
 
-        # for i in range(self.N):
-        #     for j in range(self.NW):
-        #         lbg += [0.0]
-        #         ubg += [0.01]
+        for i in range(self.N):
+            for j in range(self.NW):
+                lbg += [0.0]
+                ubg += [0.01]
 
         lbx = [0.1]
         ubx = [150]
@@ -426,17 +426,17 @@ class Planner:
                 -np.inf,
                 -np.inf,
                 0.5,
-                -np.inf,
-                -np.inf,
-                -np.inf,
+                -np.pi,
+                -np.pi,
+                -np.pi,
             ]
             ubx = ubx + [
                 np.inf,
                 np.inf,
                 100.0,
-                np.inf,
-                np.inf,
-                np.inf,
+                np.pi,
+                np.pi,
+                np.pi,
             ]
 
         # lambda

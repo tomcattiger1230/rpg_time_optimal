@@ -58,7 +58,7 @@ class Trajectory:
     def parse(self):
         self.t_total = self.x[0]
         self.t_x = ca.DM(np.linspace(0, self.t_total, self.N + 1, True))
-        self.t_u = self.t_x[0:self.N+1]
+        self.t_u = self.t_x[0:self.N + 1]
         self.u = self.x[1:(self.N + 1) * self.NU + 1]
         self.u = self.u.reshape(-1, self.NU).T
         self.state = self.x[(self.N + 1) * self.NU + 1:(self.N + 1) * self.NU +
@@ -67,15 +67,16 @@ class Trajectory:
         self.p = self.state[:, :3].T
         self.v = np.zeros(self.p.T.shape)
         for i in range(self.N):
-            self.v[i] = (self.state[i+1, :3] - self.state[i, :3])/self.t_total*self.N
+            self.v[i] = (self.state[i + 1, :3] -
+                         self.state[i, :3]) / self.t_total * self.N
         self.v = self.v.T
-        self.q = np.zeros((self.N+1, 4))
-        for i in range(self.N+1):
+        self.q = np.zeros((self.N + 1, 4))
+        for i in range(self.N + 1):
             self.q[i] = self.rpy_to_quaternion(self.state[i, 3:])
         self.q = self.q.T
-        self.w = np.zeros((self.N+1, 3))
+        self.w = np.zeros((self.N + 1, 3))
         for i in range(self.N):
-            d_q = self.state[i+1, 3:] - self.state[i, 3:]
+            d_q = self.state[i + 1, 3:] - self.state[i, 3:]
             for j in range(3):
                 q_dot = ca.atan2(ca.sin(d_q[j]), ca.cos(
                     d_q[j])) / self.t_total * self.N
@@ -83,8 +84,8 @@ class Trajectory:
         self.w = self.w.T
 
         dt = self.t_total / self.N
-        self.a_lin = np.zeros((3, self.N+1 ))
-        self.a_rot = np.zeros((3, self.N+1 ))
+        self.a_lin = np.zeros((3, self.N + 1))
+        self.a_rot = np.zeros((3, self.N + 1))
 
         self.a_lin[:, 0:-1] = np.diff(self.v) / dt
         self.a_rot[:, 0:-1] = np.diff(self.w) / dt
@@ -502,7 +503,8 @@ class Trajectory:
                 p += prev
             if plot_tau:
                 if prev is None:
-                    prev = ax.plot(self.t_u[1:], self.tau[i, :], tstyle, **kwargs)
+                    prev = ax.plot(self.t_u[1:], self.tau[i, :], tstyle,
+                                   **kwargs)
                 else:
                     prev = ax.plot(self.t_u,
                                    self.tau[i, :],
