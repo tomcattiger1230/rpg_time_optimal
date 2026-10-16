@@ -4,6 +4,13 @@ import numpy as np
 import inspect
 from copy import deepcopy
 
+# casadi>=3.8: keep the pre-3.8 numpy-on-casadi behaviour explicitly
+# (numeric in -> numpy out), instead of a FutureWarning on every call.
+try:
+    ca.GlobalOptions.setNumpyMode(-1)
+except AttributeError:
+    pass
+
 
 class Planner:
     def __init__(self, quad, track, Integrator, options={}):
@@ -214,24 +221,24 @@ class Planner:
 
         # DMOC setup
         # discrete lagrange equations
+        dt = SX.sym('dt')
         q_nm1 = SX.sym('qnm1', self.NX)
         q_n = SX.sym('qn', self.NX)
         q_np1 = SX.sym('qnp1', self.NX)
         D2L_d = ca.gradient(
-            self.discrete_lagrange(self.dt, q_nm1, q_n, self.quad.func_L), q_n)
+            self.discrete_lagrange(dt, q_nm1, q_n, self.quad.func_L), q_n)
         D1L_d = ca.gradient(
-            self.discrete_lagrange(self.dt, q_n, q_np1, self.quad.func_L), q_n)
-        d_EulerLagrange = ca.Function('dEL', [q_nm1, q_n, q_np1],
+            self.discrete_lagrange(dt, q_n, q_np1, self.quad.func_L), q_n)
+        d_EulerLagrange = ca.Function('dEL', [dt, q_nm1, q_n, q_np1],
                                       [D2L_d + D1L_d])
         q_b = SX.sym('q_b', self.NX)
         q_b_dot = SX.sym('q_b_dot', self.NX)
         D2L = self.quad.func_L_ddstates(q_b, q_b_dot)
         d_EulerLagrange_init = ca.Function('dEl_init',
-                                           [q_b, q_b_dot, q_n, q_np1],
+                                           [dt, q_b, q_b_dot, q_n, q_np1],
                                            [D2L + D1L_d])
-        d_EulerLagrange_end = ca.Function('dEl_end',
-                                          [q_b, q_b_dot, q_nm1, q_n],
-                                          [-D2L + D2L_d])
+        d_EulerLagrange_end = ca.Function(
+            'dEl_end', [dt, q_b, q_b_dot, q_nm1, q_n], [-D2L + D2L_d])
 
         g = []
 
@@ -285,7 +292,7 @@ class Planner:
                                                                           i])
             f_d_n = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, i],
                                             u[:, i], u[:, i + 1])
-            sum = d_EulerLagrange(x[:, i - 1], x[:, i],
+            sum = d_EulerLagrange(self.dt, x[:, i - 1], x[:, i],
                                   x[:, i + 1]) + f_d_nm1 + f_d_n
             g.append(sum)
 
@@ -294,9 +301,9 @@ class Planner:
         f_0 = self.discrete_forces_v2(self.dt, self.quad.func_f, x[:, 0],
                                       u[:, 0], u[:, 1])
         g.append(
-            d_EulerLagrange_init(init_full_state[:self.NX], self.track.init_vel
-                                 + self.track.init_omega, x[:, 0], x[:, 1]) +
-            f_0)
+            d_EulerLagrange_init(self.dt, init_full_state[:self.NX],
+                                 self.track.init_vel + self.track.init_omega,
+                                 x[:, 0], x[:, 1]) + f_0)
 
         # f_N_1 = self.discrete_forces_v2(self.dt, self.quad.func_f,
         #                                 x[:, self.N - 1],

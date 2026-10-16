@@ -3,6 +3,13 @@ import casadi as ca
 import numpy as np
 import inspect
 
+# casadi>=3.8: keep the pre-3.8 numpy-on-casadi behaviour explicitly
+# (numeric in -> numpy out), instead of a FutureWarning on every call.
+try:
+    ca.GlobalOptions.setNumpyMode(-1)
+except AttributeError:
+    pass
+
 
 class Planner:
     def __init__(self, quad, track, Integrator, options={}):

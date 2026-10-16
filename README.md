@@ -36,7 +36,7 @@ Bibtex:
 1. Make sure you have Python3 running.
 2. Clone this repository with `git clone git@github.com:uzh-rpg/rpg_time_optimal.git`.
 3. Navigate into the root folder of the clone repository `cd rpg_time_optimal`.
-4. Install the requirements with `uv sync` (or `pip3 install -r requirements.txt` for the legacy casadi 3.5.5 pin).
+4. Install the requirements with `uv sync` (pulls `casadi>=3.8`; use `pip3 install -r requirements.txt` instead if you want the legacy `casadi==3.5.5` pin).
 5. Run the example with `uv run python example/optimization.py`.
 6. Show some sparkly plots with `uv run python example/plotting.py`.
 
@@ -45,3 +45,9 @@ This will create output `.csv` files with the trajectory and some `.pdf` visuali
 This fork additionally ships two alternative planners:
 - `uv run python example/optimization_itm.py` — progress-based relaxed planner, writes `example/result_itm.csv` and `example/result_cpc_format_itm.csv`.
 - `uv run python example/optimization_dmoc.py` — DMOC-based planner, writes `example/result_itm_dmoc.csv` and `example/result_cpc_format_itm_dmoc.csv`.
+
+All planners run on both the legacy `casadi==3.5.5` (via `requirements.txt`) and modern `casadi>=3.8` (via `uv sync`): a small shim calls `GlobalOptions.setNumpyMode(-1)` on casadi >= 3.8 to keep the original numpy-in/numpy-out behaviour without `FutureWarning`s.
+
+The DMOC planner passes the timestep `dt` as a symbolic parameter through the discrete Euler-Lagrange residuals, so variable-step DMOC variants can be built on top of it.
+
+The default `tracks/track.yaml` now enables the full 12-gate sequence and specifies a rest-to-rest end condition (attitude, velocity, omega).
